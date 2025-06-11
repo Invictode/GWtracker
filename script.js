@@ -11,6 +11,7 @@ const firebaseConfig = {
 
 // --- INITIALIZE FIREBASE ---
 let db, auth;
+const appId = firebaseConfig.projectId; // Use projectId for consistency
 try {
     firebase.initializeApp(firebaseConfig);
     db = firebase.firestore();
@@ -24,8 +25,15 @@ const wardsConfig = [
     { name: "Gynecology Ward", beds: ["33", "34", "35", "36", "37", "38", "39", "40"], monitoringBeds: ["36", "40"] },
     { name: "Labour Room", beds: ["LR 1", "LR 2", "LR 3", "LR 4"], monitoringBeds: [] }
 ];
-const DB_COLLECTION = 'gynae_patients';
-let allData = { active: [], discharged: [], transferred: [], lama: [] };
+
+const DB_COLLECTIONS = {
+    active: `gynae_patients`,
+    discharged: `gynae_discharged`,
+    transferred: `gynae_transferred`,
+    lamaDor: `gynae_lama_dor`
+};
+
+let allData = { active: [], discharged: [], transferred: [], lamaDor: [] };
 let statsCurrentDate = new Date();
 
 // --- AUTHENTICATION CHECK ---
@@ -97,16 +105,21 @@ function openHospitalTransferModal(patient) {
 
 function archiveAndRemove(patient, collectionName, additionalData) {
     if (patient) {
-        db.collection(collectionName).add({ ...patient, ...additionalData })
-            .then(() => db.collection(DB_COLLECTION).doc(patient.id).delete());
+        const fullCollectionPath = `/artifacts/${appId}/public/data/${collectionName}`;
+        const activeDocPath = `/artifacts/${appId}/public/data/${DB_COLLECTIONS.active}/${patient.id}`;
+        
+        db.collection(fullCollectionPath).add({ ...patient, ...additionalData })
+            .then(() => db.doc(activeDocPath).delete());
     }
 }
 
 function handleDischargeAction(action, patient) {
+    // --- BUG FIX ---
+    // The 'patient' object must be passed as the first argument to archiveAndRemove.
     switch (action) {
         case 'discharge-home':
             if (confirm(`Confirm discharge for ${patient.patientName}?`)) {
-                archiveAndRemove('gynae_discharged', { dischargeTime: new Date().toISOString() });
+                archiveAndRemove(patient, DB_COLLECTIONS.discharged, { dischargeTime: new Date().toISOString() });
                 closeModal('actions');
             }
             break;
@@ -115,13 +128,13 @@ function handleDischargeAction(action, patient) {
             break;
         case 'lama':
             if (confirm("Confirm LAMA?")) {
-                archiveAndRemove('gynae_lama_dor', { status: 'LAMA', eventTime: new Date().toISOString() });
+                archiveAndRemove(patient, DB_COLLECTIONS.lamaDor, { status: 'LAMA', eventTime: new Date().toISOString() });
                 closeModal('actions');
             }
             break;
         case 'dor':
             if (confirm("Confirm DOR?")) {
-                archiveAndRemove('gynae_lama_dor', { status: 'DOR', eventTime: new Date().toISOString() });
+                archiveAndRemove(patient, DB_COLLECTIONS.lamaDor, { status: 'DOR', eventTime: new Date().toISOString() });
                 closeModal('actions');
             }
             break;
@@ -148,41 +161,31 @@ function renderAllPatients() {
         const patientGrid = document.getElementById(gridId);
         
         if (patientGrid) {
-            const occupiedBeds = new Set(wardPatients.map(p => p.bedNumber));
             wardInfo.beds.forEach(bedNumber => {
                 const patient = wardPatients.find(p => p.bedNumber === bedNumber);
                 const isMonitoring = wardInfo.monitoringBeds.includes(bedNumber);
                 const card = document.createElement('div');
                 card.className = `patient-card ${patient ? '' : 'vacant'} ${isMonitoring ? 'monitoring' : ''}`;
-                if (patient) {
-                    card.dataset.id = patient.id;
-                } else {
-                    card.dataset.ward = wardInfo.name;
-                    card.dataset.bed = bedNumber;
-                }
+                if (patient) { card.dataset.id = patient.id; } 
+                else { card.dataset.ward = wardInfo.name; card.dataset.bed = bedNumber; }
                 
-                // UPDATED THIS SECTION
-                if (patient) {
-                    card.innerHTML = `
-                        <div class="patient-card-header">
-                            <span class="bed-number">Bed: ${patient.bedNumber}</span>
-                            <span class="patient-name">${patient.patientName}</span>
-                        </div>
-                        <div class="patient-info">
-                            <p><strong>Age/Sex:</strong> ${patient.age || 'N/A'} / ${patient.sex || 'N/A'}</p>
-                            <p><strong>G/P:</strong> ${patient.gravidaPara || 'N/A'}</p>
-                            <p><strong>Gest. Age:</strong> ${patient.gestationalAge || 'N/A'}</p>
-                            <p><strong>Complaint:</strong> ${patient.presentingComplaint || 'N/A'}</p>
-                            <p><strong>Diagnosis:</strong> ${patient.diagnosis || 'N/A'}</p>
-                            <p><strong>Plan:</strong> ${patient.plan || 'N/A'}</p>
-                        </div>
-                        <div class="card-actions">
-                            <button class="card-action-btn edit" data-action="edit"><i class="fa-solid fa-pen-to-square"></i> Details</button>
-                            <button class="card-action-btn discharge" data-action="discharge"><i class="fa-solid fa-right-from-bracket"></i> Actions</button>
-                        </div>`;
-                } else {
-                    card.innerHTML = `<div class="patient-card-header"><span class="bed-number">Bed: ${bedNumber}</span><span class="patient-name">Vacant</span></div>`;
-                }
+                card.innerHTML = patient ? `
+                    <div class="patient-card-header">
+                        <span class="bed-number">Bed: ${patient.bedNumber}</span>
+                        <span class="patient-name">${patient.patientName}</span>
+                    </div>
+                    <div class="patient-info">
+                        <p><strong>Age/Sex:</strong> ${patient.age || 'N/A'} / Female</p>
+                        <p><strong>G/P:</strong> ${patient.gravidaPara || 'N/A'}</p>
+                        <p><strong>Gest. Age:</strong> ${patient.gestationalAge || 'N/A'}</p>
+                        <p><strong>Complaint:</strong> ${patient.presentingComplaint || 'N/A'}</p>
+                        <p><strong>Diagnosis:</strong> ${patient.diagnosis || 'N/A'}</p>
+                        <p><strong>Plan:</strong> ${patient.plan || 'N/A'}</p>
+                    </div>
+                    <div class="card-actions">
+                        <button class="card-action-btn edit" data-action="edit"><i class="fa-solid fa-pen-to-square"></i> Details</button>
+                        <button class="card-action-btn discharge" data-action="discharge"><i class="fa-solid fa-right-from-bracket"></i> Actions</button>
+                    </div>` : `<div class="patient-card-header"><span class="bed-number">Bed: ${bedNumber}</span><span class="patient-name">Vacant</span></div>`;
                 patientGrid.appendChild(card);
             });
         }
@@ -203,22 +206,15 @@ function updateStatsForDate() {
     statsNav.nextDay.disabled = localDate.getTime() >= today.getTime();
     
     const getShiftTimestamps = date => {
-        const dayStart8AM = new Date(date);
-        dayStart8AM.setHours(8, 0, 0, 0);
-        const prevDay8AM = new Date(dayStart8AM);
-        prevDay8AM.setDate(prevDay8AM.getDate() - 1);
-        return {
-            shift3_start: prevDay8AM,
-            shift1_start: dayStart8AM,
-            shift2_start: new Date(new Date(date).setHours(16, 0, 0, 0)),
-            endOfDay: new Date(new Date(dayStart8AM).setDate(dayStart8AM.getDate() + 1))
-        };
+        const dayStart8AM = new Date(date); dayStart8AM.setHours(8, 0, 0, 0);
+        const prevDay8AM = new Date(dayStart8AM); prevDay8AM.setDate(prevDay8AM.getDate() - 1);
+        return { shift3_start: prevDay8AM, shift1_start: dayStart8AM, shift2_start: new Date(new Date(date).setHours(16, 0, 0, 0)), endOfDay: new Date(new Date(dayStart8AM).setDate(dayStart8AM.getDate() + 1)) };
     };
 
     const dailyTimestamps = getShiftTimestamps(statsCurrentDate);
     const filterByShift = (list, timeField, start, end) => list.filter(item => { const itemTime = new Date(item[timeField]); return itemTime >= start && itemTime < end; });
     
-    const allAdmittedInPeriod = [...allData.active, ...allData.discharged, ...allData.transferred, ...allData.lama].filter(p => {
+    const allAdmittedInPeriod = [...allData.active, ...allData.discharged, ...allData.transferred, ...allData.lamaDor].filter(p => {
         const admTime = new Date(p.admissionDate);
         return admTime >= dailyTimestamps.shift3_start && admTime < dailyTimestamps.endOfDay;
     });
@@ -229,8 +225,8 @@ function updateStatsForDate() {
 }
 
 function renderList(key) {
-    const tableBodies = { discharged: document.getElementById('discharged-table-body'), transferred: document.getElementById('transferred-table-body'), lama: document.getElementById('lama-table-body'), };
-    const searchBars = { discharged: document.getElementById('search-discharged'), transferred: document.getElementById('search-transferred'), lama: document.getElementById('search-lama'), };
+    const tableBodies = { discharged: document.getElementById('discharged-table-body'), transferred: document.getElementById('transferred-table-body'), lamaDor: document.getElementById('lama-table-body'), };
+    const searchBars = { discharged: document.getElementById('search-discharged'), transferred: document.getElementById('search-transferred'), lamaDor: document.getElementById('search-lama'), };
     const tbody = tableBodies[key];
     const items = allData[key];
     const getRowRenderer = (rendererKey) => {
@@ -238,7 +234,7 @@ function renderList(key) {
         switch(rendererKey) {
             case 'discharged': return item => `<td>${item.patientName}</td><td>${item.bedNumber}</td><td>${item.ward}</td><td>${formatTime(item.dischargeTime)}</td><td>${item.diagnosis}</td>`;
             case 'transferred': return item => `<td>${item.patientName}</td><td>${item.bedNumber}</td><td>${item.ward}</td><td>${item.transferredTo}</td><td>${formatTime(item.transferTime)}</td>`;
-            case 'lama': return item => `<td>${item.patientName}</td><td>${item.bedNumber}</td><td>${item.ward}</td><td>${item.status}</td><td>${formatTime(item.eventTime)}</td>`;
+            case 'lamaDor': return item => `<td>${item.patientName}</td><td>${item.bedNumber}</td><td>${item.ward}</td><td>${item.status}</td><td>${formatTime(item.eventTime)}</td>`;
             default: return () => '';
         }
     };
@@ -252,24 +248,23 @@ function renderList(key) {
         tbody.innerHTML = `<tr><td colspan="${colspan}" class="empty-ward-message">${searchTerm ? 'No matching patients found.' : 'No patients in this list.'}</td></tr>`;
     } else {
         filteredItems.forEach(item => {
-            const row = document.createElement('tr');
-            row.innerHTML = renderRowFunc(item);
-            tbody.appendChild(row);
+            const row = document.createElement('tr'); row.innerHTML = renderRowFunc(item); tbody.appendChild(row);
         });
     }
 }
 
 function setupRealtimeListeners() {
-    db.collection(DB_COLLECTION).onSnapshot(snapshot => {
+    const basePath = `/artifacts/${appId}/public/data/`;
+    db.collection(`${basePath}${DB_COLLECTIONS.active}`).onSnapshot(snapshot => {
         allData.active = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         renderAllPatients();
         updateStatsForDate();
     });
     
-    ['discharged', 'transferred', 'lama'].forEach(key => {
-        const collectionName = `gynae_${key === 'lama' ? 'lama_dor' : key}`;
-        const timeField = key === 'lama' ? 'eventTime' : `${key.slice(0,-2)}Time`;
-        db.collection(collectionName).orderBy(timeField, 'desc').onSnapshot(snapshot => {
+    ['discharged', 'transferred', 'lamaDor'].forEach(key => {
+        const collectionName = DB_COLLECTIONS[key];
+        const timeField = key === 'lamaDor' ? 'eventTime' : (key === 'discharged' ? 'dischargeTime' : 'transferTime');
+        db.collection(`${basePath}${collectionName}`).orderBy(timeField, 'desc').onSnapshot(snapshot => {
             allData[key] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             updateStatsForDate();
             renderList(key);
@@ -289,7 +284,6 @@ function initializeApp() {
     mainContent.addEventListener('click', (e) => {
         const admitButton = e.target.closest('.admit-btn');
         if (admitButton) { openPatientModal(null, admitButton.dataset.ward, ''); return; }
-
         const card = e.target.closest('.patient-card');
         if (card) {
             const patientId = card.dataset.id;
@@ -300,12 +294,8 @@ function initializeApp() {
                     const action = actionBtn.dataset.action;
                     if (action === 'edit') openPatientModal(patient);
                     else if (action === 'discharge') openActionsModal(patient);
-                } else {
-                    openPatientModal(patient);
-                }
-            } else {
-                openPatientModal(null, card.dataset.ward, card.dataset.bed);
-            }
+                } else openPatientModal(patient);
+            } else openPatientModal(null, card.dataset.ward, card.dataset.bed);
         }
     });
 
@@ -314,7 +304,7 @@ function initializeApp() {
         if (!actionBtn) return;
         const patientId = modals.actions.dataset.patientId;
         const patient = allData.active.find(p => p.id === patientId);
-        handleDischargeAction(actionBtn.dataset.action, patient);
+        if(patient) handleDischargeAction(actionBtn.dataset.action, patient);
     });
 
     forms.patient.addEventListener('submit', (e) => {
@@ -334,8 +324,10 @@ function initializeApp() {
             diagnosis: document.getElementById('diagnosis').value,
             plan: document.getElementById('plan').value,
         };
-        if (patientId) { db.collection(DB_COLLECTION).doc(patientId).update(patientData).then(() => closeModal('patient')); } 
-        else { patientData.admissionDate = new Date().toISOString(); db.collection(DB_COLLECTION).add(patientData).then(() => closeModal('patient')); }
+        const docRef = patientId ? db.doc(`/artifacts/${appId}/public/data/${DB_COLLECTIONS.active}/${patientId}`) : db.collection(`/artifacts/${appId}/public/data/${DB_COLLECTIONS.active}`);
+        
+        if (patientId) { docRef.update(patientData).then(() => closeModal('patient')); } 
+        else { patientData.admissionDate = new Date().toISOString(); docRef.add(patientData).then(() => closeModal('patient')); }
     });
     
     forms.hospitalTransfer.addEventListener('submit', (e) => {
@@ -343,7 +335,7 @@ function initializeApp() {
         const patientId = forms.hospitalTransfer.elements['hospital-transfer-patient-id'].value;
         const hospital = forms.hospitalTransfer.elements['transfer-hospital'].value;
         const patient = allData.active.find(p => p.id === patientId);
-        if (patient && hospital) { archiveAndRemove(patient, 'gynae_transferred', { transferredTo: hospital, transferTime: new Date().toISOString() }); }
+        if (patient && hospital) { archiveAndRemove(patient, DB_COLLECTIONS.transferred, { transferredTo: hospital, transferTime: new Date().toISOString() }); }
         closeModal('hospitalTransfer');
     });
 
@@ -352,7 +344,7 @@ function initializeApp() {
     signOutBtn.addEventListener('click', () => auth.signOut());
     Object.keys(navButtons).forEach(key => { if (navButtons[key]) navButtons[key].addEventListener('click', () => showView(key)); });
     
-    const searchBars = { discharged: document.getElementById('search-discharged'), transferred: document.getElementById('search-transferred'), lama: document.getElementById('search-lama'), };
+    const searchBars = { discharged: document.getElementById('search-discharged'), transferred: document.getElementById('search-transferred'), lamaDor: document.getElementById('search-lama'), };
     Object.keys(searchBars).forEach(key => { if (searchBars[key]) searchBars[key].addEventListener('input', () => renderList(key)); });
     
     statsNav.prevDay.addEventListener('click', () => { statsCurrentDate.setDate(statsCurrentDate.getDate() - 1); updateStatsForDate(); });
